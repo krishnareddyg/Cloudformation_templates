@@ -1,7 +1,7 @@
 {
   "AWSTemplateFormatVersion" : "2010-09-09",
 
-  "Description" : "AWS CloudFormation Sample Template LAMP_Multi_AZ: Create a highly available, scalable LAMP stack with an Amazon RDS database instance for the backend data store. This template demonstrates using the AWS CloudFormation bootstrap scripts to install the packages and files necessary to deploy the Apache web server and PHP at instance launch time. **WARNING** This template creates one or more Amazon EC2 instances, an Elastic Load Balancer and an Amazon RDS DB instance. You will be billed for the AWS resources used if you create a stack from this template.",
+  "Description" : "AWS CloudFormation Sample Template Tracks_Multi_AZ: Tracks is a web-based application to help you implement David Allens Getting Things Done methodology. This template installs a highly-available, scalable Tracks deployment using a multi-az Amazon RDS database instance for storage. It demonstrates using the AWS CloudFormation bootstrap scripts to install the packages and files at instance launch time. **WARNING** This template creates an Amazon EC2 instance and an Amazon RDS database instance and an Elastic Load Balancer. You will be billed for the AWS resources used if you create a stack from this template.",
 
   "Parameters" : {
 
@@ -15,7 +15,7 @@
     },
 
     "DBName": {
-      "Default": "MyDatabase",
+      "Default": "tracks",
       "Description" : "MySQL database name",
       "Type": "String",
       "MinLength": "1",
@@ -36,29 +36,12 @@
 
     "DBPassword": {
       "NoEcho": "true",
-      "Description" : "Password for MySQL database access",
+      "Description" : "Password MySQL database access",
       "Type": "String",
       "MinLength": "8",
       "MaxLength": "41",
       "AllowedPattern" : "[a-zA-Z0-9]*",
       "ConstraintDescription" : "must contain only alphanumeric characters."
-    },
-
-    "DBAllocatedStorage": {
-      "Default": "5",
-      "Description" : "The size of the database (Gb)",
-      "Type": "Number",
-      "MinValue": "5",
-      "MaxValue": "1024",
-      "ConstraintDescription" : "must be between 5 and 1024Gb."
-    },
-
-    "DBInstanceClass": {
-      "Default": "db.m1.small",
-      "Description" : "The database instance type",
-      "Type": "String",
-      "AllowedValues" : [ "db.m1.small", "db.m1.large", "db.m1.xlarge", "db.m2.xlarge", "db.m2.2xlarge", "db.m2.4xlarge" ],
-      "ConstraintDescription" : "must select a valid database instance type."
     },
 
     "MultiAZDatabase": {
@@ -84,6 +67,23 @@
       "Default" : "m1.small",
       "AllowedValues" : [ "t1.micro","m1.small","m1.medium","m1.large","m1.xlarge","m2.xlarge","m2.2xlarge","m2.4xlarge","m3.xlarge","m3.2xlarge","c1.medium","c1.xlarge","cc1.4xlarge","cc2.8xlarge","cg1.4xlarge"],
       "ConstraintDescription" : "must be a valid EC2 instance type."
+    },
+
+    "DBClass" : {
+      "Default" : "db.m1.small",
+      "Description" : "Database instance class",
+      "Type" : "String",
+      "AllowedValues" : [ "db.m1.small", "db.m1.large", "db.m1.xlarge", "db.m2.xlarge", "db.m2.2xlarge", "db.m2.4xlarge" ],
+      "ConstraintDescription" : "must select a valid database instance type."
+    },
+
+    "DBAllocatedStorage" : {
+      "Default": "5",
+      "Description" : "The size of the database (Gb)",
+      "Type": "Number",
+      "MinValue": "5",
+      "MaxValue": "1024",
+      "ConstraintDescription" : "must be between 5 and 1024Gb."
     },
     "SSHLocation" : {
       "Description" : " The IP address range that can be used to SSH to the EC2 instances",
@@ -132,7 +132,8 @@
     "ElasticLoadBalancer" : {
       "Type" : "AWS::ElasticLoadBalancing::LoadBalancer",
       "Metadata" : {
-        "Comment" : "Configure the Load Balancer with a simple health check and cookie-based stickiness"
+        "Comment1" : "Configure the Load Balancer with a simple health check and cookie-based stickiness",
+        "Comment2" : "Use the signup path for healthcheck to avoid redirects - ELB healthcheck does not handle 302 return codes"
       },
       "Properties" : {
         "AvailabilityZones" : { "Fn::GetAZs" : "" },
@@ -142,12 +143,12 @@
         } ],
         "Listeners" : [ {
           "LoadBalancerPort" : "80",
-          "InstancePort" : "80",
+          "InstancePort" : "3000",
           "Protocol" : "HTTP",
           "PolicyNames" : [ "CookieBasedPolicy" ]
         } ],
         "HealthCheck" : {
-          "Target" : "HTTP:80/",
+          "Target" : "HTTP:3000/signup",
           "HealthyThreshold" : "2",
           "UnhealthyThreshold" : "5",
           "Interval" : "10",
@@ -171,29 +172,46 @@
     "LaunchConfig": {
       "Type" : "AWS::AutoScaling::LaunchConfiguration",
       "Metadata" : {
-        "Comment1" : "Configure the bootstrap helpers to install the Apache Web Server and PHP",
-        "Comment2" : "The website content is downloaded from the CloudFormationPHPSample.zip file",
-
         "AWS::CloudFormation::Init" : {
           "config" : {
             "packages" : {
               "yum" : {
-                "httpd"        : [],
-                "php"          : [],
-                "php-mysql"    : []
+                "gcc-c++"      : [],
+                "make"         : [],
+                "ruby-devel"   : [],
+                "ruby-rdoc"    : [],
+                "rubygems"     : [],
+                "mysql"        : [],
+                "mysql-devel"  : [],
+                "mysql-libs"   : [],
+                "libxml2-devel": [],
+                "libxslt-devel": [],
+                "sqlite-devel" : [],
+                "libffi-devel" : []
+              },
+
+              "rubygems" : {
+               "bundler"   : [1.2]
               }
             },
 
             "sources" : {
-              "/var/www/html" : "https://s3.amazonaws.com/cloudformation-examples/CloudFormationPHPSample.zip"
+              "/home/ec2-user/tracks" : "https://github.com/TracksApp/tracks/tarball/v2.1"
             },
 
-            "services" : {
-              "sysvinit" : {
-                "httpd" : {
-                  "enabled"       : "true",
-                  "ensureRunning" : "true"
-                }
+            "files" : {
+              "/home/ec2-user/tracks/config/database.yml" : {
+                "content" : { "Fn::Join" : ["", [
+                  "production:\n",
+                  "  adapter: mysql\n",
+                  "  database: ", { "Ref" : "DBName" }, "\n",
+                  "  host: ", {"Fn::GetAtt" : ["DBInstance", "Endpoint.Address"]}, "\n",
+                  "  username: ", { "Ref" : "DBUsername" }, "\n",
+                  "  password: ", { "Ref" : "DBPassword" }, "\n"
+                  ]]},
+                "mode"  : "000644",
+                "owner" : "root",
+                "group" : "root"
               }
             }
           }
@@ -216,17 +234,18 @@
           "  exit 1\n",
           "}\n",
 
-          "# Install LAMP packages\n",
+          "# Install packages\n",
           "/opt/aws/bin/cfn-init -s ", { "Ref" : "AWS::StackId" }, " -r LaunchConfig ",
-		  "    --region ", { "Ref" : "AWS::Region" }, " || error_exit 'Failed to run cfn-init'\n",
+          "    --region ", { "Ref" : "AWS::Region" }, " || error_exit 'Failed to run cfn-init'\n",
 
-          "# Configure the PHP application - in this case, fixup the page with the right references to the database\n",
-          "sed -i \"s/REPLACE_WITH_DATABASE/", { "Fn::GetAtt": [ "MySQLDatabase", "Endpoint.Address" ] }, ":", { "Fn::GetAtt": [ "MySQLDatabase", "Endpoint.Port" ] }, "/g\" /var/www/html/index.php\n",
-          "sed -i \"s/REPLACE_WITH_DBUSER/", { "Ref" : "DBUsername" }, "/g\" /var/www/html/index.php\n",
-          "sed -i \"s/REPLACE_WITH_DBPASSWORD/", { "Ref" : "DBPassword" }, "/g\" /var/www/html/index.php\n",
+          "# Configure and fire up the service\n",
+          "cd /home/ec2-user/tracks\n",
+          "cp config/site.yml.tmpl config/site.yml\n",
+          "rake db:migrate RAILS_ENV=production\n",
+          "script/server -e production &\n",
 
           "# All is well so signal success\n",
-          "/opt/aws/bin/cfn-signal -e 0 -r \"LAMP Stack setup complete\" '", { "Ref" : "WaitHandle" }, "'\n"
+          "/opt/aws/bin/cfn-signal -e 0 -r \"Tracks setup complete\" '", { "Ref" : "WaitHandle" }, "'\n"
         ]]}}
       }
     },
@@ -239,44 +258,41 @@
       "Type" : "AWS::CloudFormation::WaitCondition",
       "DependsOn" : "WebServerGroup",
       "Properties" : {
-        "Handle"  : {"Ref" : "WaitHandle"},
-        "Timeout" : "300",
-        "Count"   : { "Ref" : "WebServerCapacity" }
+        "Handle" : {"Ref" : "WaitHandle"},
+        "Timeout" : "900"
       }
     },
 
-    "WebServerSecurityGroup" : {
-      "Type" : "AWS::EC2::SecurityGroup",
-      "Properties" : {
-        "GroupDescription" : "Enable HTTP access via port 80 locked down to the ELB and SSH access",
-        "SecurityGroupIngress" : [
-          {"IpProtocol" : "tcp", "FromPort" : "80", "ToPort" : "80", "SourceSecurityGroupOwnerId" : {"Fn::GetAtt" : ["ElasticLoadBalancer", "SourceSecurityGroup.OwnerAlias"]},"SourceSecurityGroupName" : {"Fn::GetAtt" : ["ElasticLoadBalancer", "SourceSecurityGroup.GroupName"]}},
-          {"IpProtocol" : "tcp", "FromPort" : "22", "ToPort" : "22", "CidrIp" : { "Ref" : "SSHLocation"}}
-        ]
+    "DBInstance" : {
+      "Type": "AWS::RDS::DBInstance",
+      "Properties": {
+        "DBName"            : { "Ref" : "DBName" },
+        "Engine"            : "MySQL",
+        "MasterUsername"    : { "Ref" : "DBUsername" },
+        "DBInstanceClass"   : { "Ref" : "DBClass" },
+        "MultiAZ"           : { "Ref" : "MultiAZDatabase" },
+        "DBSecurityGroups"  : [{ "Ref" : "DBSecurityGroup" }],
+        "AllocatedStorage"  : { "Ref" : "DBAllocatedStorage" },
+        "MasterUserPassword": { "Ref" : "DBPassword" }
       }
     },
 
     "DBSecurityGroup": {
       "Type": "AWS::RDS::DBSecurityGroup",
       "Properties": {
-        "GroupDescription": "Grant database access to web server",
-        "DBSecurityGroupIngress": {
-          "EC2SecurityGroupName": { "Ref": "WebServerSecurityGroup" }
-        }
+        "DBSecurityGroupIngress": { "EC2SecurityGroupName": { "Ref": "WebServerSecurityGroup"} },
+        "GroupDescription"      : "Frontend Access"
       }
     },
 
-    "MySQLDatabase": {
-      "Type": "AWS::RDS::DBInstance",
-      "Properties": {
-        "Engine" : "MySQL",
-        "DBName" : { "Ref": "DBName" },
-        "MultiAZ" : { "Ref": "MultiAZDatabase" },
-        "MasterUsername": { "Ref": "DBUsername" },
-        "MasterUserPassword": { "Ref" : "DBPassword" },
-        "DBInstanceClass": { "Ref" : "DBInstanceClass" },
-        "DBSecurityGroups": [ { "Ref": "DBSecurityGroup" } ],
-        "AllocatedStorage": { "Ref" : "DBAllocatedStorage" }
+    "WebServerSecurityGroup" : {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "GroupDescription" : "Enable HTTP access via port 3000 plus SSH access",
+        "SecurityGroupIngress" : [
+          {"IpProtocol" : "tcp", "FromPort" : "3000", "ToPort" : "3000", "SourceSecurityGroupOwnerId" : {"Fn::GetAtt" : ["ElasticLoadBalancer", "SourceSecurityGroup.OwnerAlias"]},"SourceSecurityGroupName" : {"Fn::GetAtt" : ["ElasticLoadBalancer", "SourceSecurityGroup.GroupName"]}},
+          {"IpProtocol" : "tcp", "FromPort" : "22", "ToPort" : "22", "CidrIp" : { "Ref" : "SSHLocation"}}
+        ]
       }
     }
   },
@@ -284,7 +300,7 @@
   "Outputs" : {
     "WebsiteURL" : {
       "Value" : { "Fn::Join" : ["", ["http://", { "Fn::GetAtt" : [ "ElasticLoadBalancer", "DNSName" ]}]] },
-      "Description" : "URL for newly created LAMP stack"
+      "Description" : "URL for Tracks"
     }
   }
 }

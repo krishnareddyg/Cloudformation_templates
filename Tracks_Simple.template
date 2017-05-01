@@ -1,11 +1,10 @@
 {
   "AWSTemplateFormatVersion" : "2010-09-09",
   
-  "Description" : "AWS CloudFormation Sample Template LAMP_Single_Instance: Create a LAMP stack using a single EC2 instance and a local MySQL database for storage. This template demonstrates using the AWS CloudFormation bootstrap scripts to install the packages and files necessary to deploy the Apache web server, PHP and MySQL at instance launch time. **WARNING** This template creates an Amazon EC2 instance. You will be billed for the AWS resources used if you create a stack from this template.",
+  "Description" : "AWS CloudFormation Sample Template Tracks_Simple: Tracks is a web-based application to help you implement David Allens Getting Things Done methodology. This template installs a Tracks stack using a single EC2 instance with a local MySQL database for storage. It demonstrates using the AWS CloudFormation bootstrap scripts to install the packages and files at instance launch time. **WARNING** This template creates an Amazon EC2 instance. You will be billed for the AWS resources used if you create a stack from this template.",
   
   "Parameters" : {
-      
-    "DBRootPassword": {
+      "DBRootPassword": {
       "NoEcho": "true",
       "Description" : "Root password for MySQL",
       "Default" : "admin",
@@ -57,46 +56,64 @@
   },
     
   "Resources" : {     
-      
+
     "WebServer": {  
       "Type": "AWS::EC2::Instance",
       "Metadata" : {
-        "Comment1" : "Configure the bootstrap helpers to install the Apache Web Server and PHP",
-        "Comment2" : "The website content is downloaded from the CloudFormationPHPSample.zip file",
-
         "AWS::CloudFormation::Init" : {
           "config" : {
             "packages" : {
               "yum" : {
+                "gcc-c++"      : [],
+                "make"         : [],
+                "ruby-devel"   : [],
+                "ruby-rdoc"    : [],
+                "rubygems"     : [],
                 "mysql"        : [],
                 "mysql-server" : [],
+                "mysql-devel"  : [],
                 "mysql-libs"   : [],
-                "httpd"        : [],
-                "php"          : [],
-                "php-mysql"    : []
-              }
+                "libxml2-devel": [],
+                "libxslt-devel": [],
+                "sqlite-devel" : [],
+                "libffi-devel" : []
+              },
+
+              "rubygems" : {
+                   "bundler"   : [1.2]
+                }
             },
 
             "sources" : {
-              "/var/www/html" : "https://s3.amazonaws.com/cloudformation-examples/CloudFormationPHPSample.zip"
+              "/home/ec2-user/tracks" : "https://github.com/TracksApp/tracks/tarball/v2.1"
             },
 
             "files" : {
               "/tmp/setup.mysql" : {
-                "content" : "CREATE DATABASE lampdb;\n",
+                "content" : "CREATE DATABASE tracksdb;\n",
                 "mode"    : "000644",
                 "owner"   : "root",
                 "group"   : "root"
+              },
+
+              "/home/ec2-user/tracks/config/database.yml" : {
+                "content" : { "Fn::Join" : ["", [
+                  "production:\n",
+                  "  adapter: mysql\n",
+                  "  database: tracksdb\n",
+                  "  host: localhost\n",
+                  "  username: root\n",
+                  "  password: ", { "Ref" : "DBRootPassword" }, "\n"
+                  ]]},
+                "mode"  : "000644",
+                "owner" : "root",
+                "group" : "root"
               }
             },
 
             "services" : {
               "sysvinit" : {  
                 "mysqld" : {
-                  "enabled"       : "true",
-                  "ensureRunning" : "true"                
-                },
-                "httpd" : {
                   "enabled"       : "true",
                   "ensureRunning" : "true"                
                 }
@@ -121,21 +138,23 @@
           "  exit 1\n",
           "}\n",
 
-          "# Install LAMP packages\n",
+          "# Install packages\n",
           "/opt/aws/bin/cfn-init -s ", { "Ref" : "AWS::StackId" }, " -r WebServer ",
-		  "    --region ", { "Ref" : "AWS::Region" }, " || error_exit 'Failed to run cfn-init'\n",
+          "    --region ", { "Ref" : "AWS::Region" }, " || error_exit 'Failed to run cfn-init'\n",
 
-          "# Setup MySQL, create a user and a database\n",
+          "# Setup MySQL root password and create a user\n",
           "mysqladmin -u root password '", { "Ref" : "DBRootPassword" }, "' || error_exit 'Failed to initialize root password'\n",
-          "mysql -u root --password='", { "Ref" : "DBRootPassword" }, "' < /tmp/setup.mysql || error_exit 'Failed to initialize database'\n",
+          "mysql -u root --password='", { "Ref" : "DBRootPassword" }, "' < /tmp/setup.mysql || error_exit 'Failed to create database user'\n",
 
-          "# Configure the PHP application - in this case, fixup the page with the right references to the database\n",
-          "sed -i \"s/REPLACE_WITH_DATABASE/localhost/g\" /var/www/html/index.php\n",
-          "sed -i \"s/REPLACE_WITH_DBUSER/root/g\" /var/www/html/index.php\n",
-          "sed -i \"s/REPLACE_WITH_DBPASSWORD/", { "Ref" : "DBRootPassword" }, "/g\" /var/www/html/index.php\n",
+          "# Configure and fire up the service\n",
+          "cd /home/ec2-user/tracks 2.1\n",
+          "cp config/site.yml.tmpl config/site.yml\n",
+          "bundle install \n",
+          "bundle exec rake db:migrate RAILS_ENV=production\n",
+          "bundle exec script/server -e production &\n",
 
           "# All is well so signal success\n",
-          "/opt/aws/bin/cfn-signal -e 0 -r \"LAMP Stack setup complete\" '", { "Ref" : "WaitHandle" }, "'\n"
+          "/opt/aws/bin/cfn-signal -e 0 -r \"Tracks setup complete\" '", { "Ref" : "WaitHandle" }, "'\n"
         ]]}}        
       }
     },
@@ -149,16 +168,16 @@
       "DependsOn" : "WebServer",
       "Properties" : {
         "Handle" : {"Ref" : "WaitHandle"},
-        "Timeout" : "300"
+        "Timeout" : "900"
       }
     },
     
     "WebServerSecurityGroup" : {
       "Type" : "AWS::EC2::SecurityGroup",
       "Properties" : {
-        "GroupDescription" : "Enable HTTP access via port 80",
+        "GroupDescription" : "Enable HTTP access via port 3000",
         "SecurityGroupIngress" : [
-          {"IpProtocol" : "tcp", "FromPort" : "80", "ToPort" : "80", "CidrIp" : "0.0.0.0/0"}
+          {"IpProtocol" : "tcp", "FromPort" : "3000", "ToPort" : "3000", "CidrIp" : "0.0.0.0/0"}
         ]
       }      
     }          
@@ -166,8 +185,8 @@
   
   "Outputs" : {
     "WebsiteURL" : {
-      "Value" : { "Fn::Join" : ["", ["http://", { "Fn::GetAtt" : [ "WebServer", "PublicDnsName" ]}]] },
-      "Description" : "URL for newly created LAMP stack"
+      "Value" : { "Fn::Join" : ["", ["http://", { "Fn::GetAtt" : [ "WebServer", "PublicDnsName" ]}, ":3000" ]] },
+      "Description" : "URL for Tracks"
     }
   }
 }
